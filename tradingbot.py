@@ -375,6 +375,9 @@ print('\n' + trend)
 
 bots_running_both_sides = check_bots_running(trend, data_order_book, info['Base'], info['Quote'])
 
+get_user_current_orders()
+cancel_all_user_current_orders()
+
 print('Other bots running: ' + str(bots_running_both_sides))
 
 if bots_running_both_sides == True:
