@@ -136,11 +136,20 @@ def create_order(base, quote, my_new_offer, side):
 		"Authorization" : f"Bearer {api_key}"
 	}
 
-	#### RUN IN TRY BLOCK TO CHECK FOR ERRORS
-	response = requests.post(url=url, data=json.dumps(body), headers=headers)
+
+	try:
+		response = requests.post(url=url, data=json.dumps(body), headers=headers)
+		r = json.loads(response.text)
+		if r['status_code'] == 400:
+			raise ValueError
+		else:
+			print('Order id: ' + r['order_id'])
+	except ValueError:
+		print('Value Errorx')
+	except KeyError:
+		print('Invalid key')
 	
-	r = json.loads(response.text)
-	print('Order id: ' + r['order_id'])
+
 
 	return response
 
@@ -162,19 +171,23 @@ def make_better_offer(data_order_book, base, quote, side, difference_best_offer)
 	response = create_order(base, quote, my_new_offer, side)
 
 	# Save order to global variable
-	response = json.loads(response.text)
-	print(response)
-	
-	new_order_info = {
+	try:
+		response = json.loads(response.text)
+		print(response)
+
+		new_order_info = {
 		'order_id': response['order_id'],
 		'price': response['limit_price'],
 		'pair': response['pair'],
 		'side': response['side'],
 		'created_at': response['created_at'],
 		'amount': response['amount']
-	}
-
-	orders_info.append(new_order_info)
+		}
+		orders_info.append(new_order_info)
+	except KeyError:
+		print('Key Error')
+		exit()
+	
 
 	return my_new_offer
 
@@ -290,7 +303,10 @@ def get_best_value_sell():
 	if count == 0:
 		return False, -1
 	else:
-		return True, best_offer
+		# Get all details from 2nd best offer (best offer is mine)
+		data_order_book = update_data_order_book()
+		second_offer_details = data_order_book['sell'][1]
+		return True, best_offer, second_offer_details
 
 def get_best_value_buy():
 
@@ -309,7 +325,10 @@ def get_best_value_buy():
 	if count == 0:
 		return False, -1
 	else:
-		return True, best_offer
+		# Get all details from 2nd best offer (best offer is mine)
+		data_order_book = update_data_order_book()
+		second_offer_details = data_order_book['buy'][1]
+		return True, best_offer, second_offer_details
 
 ### ------------ Get order ids from current user and stores them in current_user_orders_ids ------------
 
@@ -324,8 +343,14 @@ def get_user_current_orders():
 		"Authorization" : f"Bearer {api_key}"
 	}
 
-	#### RUN IN TRY BLOCK TO CHECK FOR ERRORS
-	response = requests.get(url=url, headers=headers)
+
+	try:
+		response = requests.get(url=url, headers=headers)
+	except ValueError:
+		print('Value Error')
+	except KeyError:
+		print('Invalid key')
+
 	response = json.loads(response.text)
 
 	for order in response['results']['data']:
@@ -358,7 +383,75 @@ def cancel_all_user_current_orders():
 		print(response.text)
 
 
-###################### modify later after test are finished base and quote.
+### ------------ Lowers / Increases the best offer to the best value gotten before and buys / sells that offer ------------
+
+def lower_sell_offer_until_price(second_offer_details_sell):
+	
+	data_order_book = update_data_order_book()
+	best_offer = data_order_book['sell'][0]['price']
+	difference_best_offer = abs(second_offer_details_sell - best_offer)
+
+	while my_new_offer <= best_offer and count < 15 and best_offer >= second_offer_details_sell:
+		
+		my_new_offer = make_better_offer(data_order_book, base, quote, 'SELL', difference_best_offer = difference_best_offer * 0.1)
+
+		data_order_book = update_data_order_book()
+		best_offer = data_order_book['sell'][0]['price']
+
+		if my_new_offer <= best_offer:
+			time.sleep(1)
+			count += 1
+			print(str(count) + '...')
+		else:
+			print('Bot operating on sell side\n')
+			continue
+	
+	if best_offer <= second_offer_details_sell['price']:
+
+		print(f'Buying' + str(second_offer_details_sell['price']))
+		cancel_all_user_current_orders()
+		create_order(base, quote, best_offer, 'SELL')
+		
+		print('Order created.')
+
+### ------------ Lowers / Increases the best offer to the best value gotten before and buys / sells that offer ------------
+
+def increase_buy_offer_until_price(second_offer_details_buy):
+	
+	data_order_book = update_data_order_book()
+	best_offer = data_order_book['buy'][0]['price']
+	difference_best_offer = abs(second_offer_details_buy - best_offer)
+
+	while my_new_offer >= best_offer and count < 15 and best_offer <= second_offer_details_buy:
+		
+		my_new_offer = make_better_offer(data_order_book, base, quote, 'BUY', difference_best_offer = difference_best_offer * 0.1)
+
+		data_order_book = update_data_order_book()
+		best_offer = data_order_book['buy'][0]['price']
+
+		if my_new_offer >= best_offer:
+			time.sleep(1)
+			count += 1
+			print(str(count) + '...')
+		else:
+			print('Bot operating on buy side\n')
+			continue
+	
+	if best_offer >= second_offer_details_buy['price']:
+
+		print(f'Buying' + str(second_offer_details_buy['price']))
+		cancel_all_user_current_orders()
+		create_order(base, quote, best_offer, 'SELL')
+		
+		print('Order created.')
+
+
+
+
+
+
+
+
 ###################### make option to choose pairs (ETH_USDC, BTC_USDC, USDC_ARS)
 
 print('')
@@ -382,14 +475,40 @@ print('Other bots running: ' + str(bots_running_both_sides))
 
 if bots_running_both_sides == True:
 	#check spread again
-	spread , spread_percentage = check_spread(info['Base'], info['Quote'])
+	spread , spread_percentage = check_spread(base, quote)
 	print(f'Spread: {spread}\nSpread percentage: {spread_percentage}')
 
 	if spread_percentage > 5:
 		print('Spread higher than 5%')
 	
-	best_value_sell = get_best_value_sell()
-	best_value_buy = get_best_value_buy()
+	# Get both best value prices
+	best_value_sell, best_offer_sell, second_offer_details_sell = get_best_value_sell()
+	cancel_all_user_current_orders()
+	best_value_buy, best_offer_buy, second_offer_details_buy = get_best_value_buy()
+	cancel_all_user_current_orders()
+	
+
+# If both best value prices could be retrieved
+
+if best_value_sell == True and best_value_buy == True:
+
+	# Start lowering sell offer until second_offer_details_sell and buy that offer
+	lower_sell_offer_until_price(second_offer_details_sell)
+
+	time.sleep(15)
+	cancel_all_user_current_orders()
+
+	# Start increasing sell offer until second_offer_details_buy and sell that offer
+	increase_buy_offer_until_price(second_offer_details_buy)
+
+	time.sleep(15)
+	cancel_all_user_current_orders()
+
+	# At this point, the bot has bought the coin at a lower value than what it has sold it after, with barely any delay (Apart from waiting for the other bots to respond and make better offers)
+
+
+
+
 
 
 print(f'\nOrders created:\n{orders_info}')
